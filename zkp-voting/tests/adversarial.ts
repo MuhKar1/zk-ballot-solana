@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { PublicKey } from "@solana/web3.js";
 
 const PROGRAM_ID = new PublicKey(
-  "4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA"
+  "HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5"
 );
 const authority = new PublicKey("11111111111111111111111111111111");
 const otherAuthority = new PublicKey(

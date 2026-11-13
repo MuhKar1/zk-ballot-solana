@@ -14,7 +14,7 @@ import BN from "bn.js";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import type { ZkpVoting } from "../target/types/zkp_voting";
 
-const VERIFIER_ID = new PublicKey("9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj");
+const VERIFIER_ID = new PublicKey("BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV");
 const TALLY_VERIFIER_ID = new PublicKey("AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav");
 
 const ONE = [...Buffer.from("0000000000000000000000000000000000000000000000000000000000000001", "hex")];
@@ -391,4 +391,3 @@ describe("instruction matrix", () => {
     });
   });
 });
-

@@ -1,5 +1,5 @@
 {
-  "address": "4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA",
+  "address": "HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5",
   "metadata": {
     "name": "zkp_voting",
     "version": "0.1.0",
@@ -121,7 +121,7 @@
         },
         {
           "name": "verifier",
-          "address": "9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj"
+          "address": "BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV"
         }
       ],
       "args": [

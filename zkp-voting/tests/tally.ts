@@ -59,7 +59,7 @@ const proof = readFileSync(resolve(artifactDirectory, "voting_circuit.proof"));
 const publicWitness = readFileSync(resolve(artifactDirectory, "voting_circuit.pw"));
 const tallyProof = readFileSync(resolve(artifactDirectory, "tally_circuit.proof"));
 const tallyFixture = JSON.parse(readFileSync(resolve(artifactDirectory, "tally_circuit.fixture.json"), "utf8")) as TallyFixture;
-const verifierId = new PublicKey("9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj");
+const verifierId = new PublicKey("BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV");
 const tallyVerifierId = new PublicKey("AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav");
 const computeBudget = ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 });
 
@@ -249,7 +249,7 @@ describe("trustless tally integration", () => {
 
     const addressTreeInfo = {
       addressMerkleTreePubkeyIndex: 0,
-      addressQueuePubkeyIndex: 1,
+      addressQueuePubkeyIndex: addressTree.queue.equals(addressTree.tree) ? 0 : 1,
       rootIndex: validity.rootIndices[0],
     };
     const validityProof = {
@@ -360,4 +360,3 @@ describe("trustless tally integration", () => {
     assert.deepEqual(Buffer.from(tallyAccount.transcriptHash), fieldBytes(tallyFixture.transcript));
   });
 });
-

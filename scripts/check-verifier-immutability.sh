@@ -8,7 +8,7 @@
 #   solana program set-upgrade-authority <ID> --final
 set -euo pipefail
 
-VOTING_ID="${VOTING_ID:-9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj}"
+VOTING_ID="${VOTING_ID:-BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV}"
 TALLY_ID="${TALLY_ID:-AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav}"
 RPC_URL="${RPC_URL:-http://127.0.0.1:8899}"
 

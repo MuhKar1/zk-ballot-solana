@@ -7,8 +7,8 @@
 // never leaves the browser.
 
 import { NextResponse } from "next/server";
-import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const runtime = "nodejs";
@@ -44,6 +44,29 @@ export async function POST(req: Request) {
   const pkg = circuit === "voting" ? "voting_circuit" : "tally_circuit";
   const target = join(circuitsDir, "target");
   const tomlPath = join(circuitsDir, pkg, "Prover.toml");
+
+  const sunspotCheck = spawnSync("sunspot", ["--help"], { stdio: "ignore" });
+  const sunspotError = sunspotCheck.error as NodeJS.ErrnoException | undefined;
+  if (sunspotError?.code === "ENOENT") {
+    return NextResponse.json(
+      { error: "Sunspot v1 is not installed or not on the server PATH. Install the pinned toolchain and restart the app." },
+      { status: 500 }
+    );
+  }
+  if (sunspotError) {
+    return NextResponse.json({ error: `Couldn't start Sunspot: ${sunspotError.message}` }, { status: 500 });
+  }
+
+  const requiredArtifacts = [`${pkg}.json`, `${pkg}.ccs`, `${pkg}.pk`];
+  const missingArtifacts = requiredArtifacts.filter((file) => !existsSync(join(target, file)));
+  if (missingArtifacts.length > 0) {
+    return NextResponse.json(
+      {
+        error: `Missing ${pkg} proving artifacts: ${missingArtifacts.join(", ")}. Use artifacts matching the deployed verifier; do not run sunspot setup to generate a replacement key.`,
+      },
+      { status: 500 }
+    );
+  }
 
   let original: string | null = null;
   try {

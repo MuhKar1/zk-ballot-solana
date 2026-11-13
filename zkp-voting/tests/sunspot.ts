@@ -11,7 +11,7 @@ import {
 } from "@solana/web3.js";
 
 const verifierId = new PublicKey(
-  "9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj"
+  "BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV"
 );
 const artifactDirectory = resolve(process.cwd(), "../circuits/target");
 const proof = readFileSync(resolve(artifactDirectory, "voting_circuit.proof"));

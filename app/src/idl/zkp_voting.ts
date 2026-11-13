@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/zkp_voting.json`.
  */
 export type ZkpVoting = {
-  "address": "4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA",
+  "address": "HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5",
   "metadata": {
     "name": "zkpVoting",
     "version": "0.1.0",
@@ -127,7 +127,7 @@ export type ZkpVoting = {
         },
         {
           "name": "verifier",
-          "address": "9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj"
+          "address": "BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV"
         }
       ],
       "args": [

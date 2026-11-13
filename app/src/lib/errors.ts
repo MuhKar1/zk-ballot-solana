@@ -20,6 +20,16 @@ const BY_CODE: Record<number, string> = {
   6017: "Tally proof length out of range",
   6018: "This position has reached its tally capacity (8 ballots)",
   6019: "Poseidon syscall failed",
+
+  // --- Light Protocol / Light System Program errors (SySTEM1eSU2p4BGQfQpimFEWWSC1XDFeun3Nqzz3rT7) ---
+  // These surface when the zkp-voting program's CPI into the Light system program
+  // fails. Discriminator errors can also mean the CPI supplied the wrong account
+  // index or layout; batched address trees use the same account for tree and queue.
+  6037: "Light address Merkle tree height is invalid (Light SDK/cluster version mismatch)",
+  6038: "Light state Merkle tree height is invalid (Light SDK/cluster version mismatch)",
+  6041: "Light address tree account/index mismatch (batched V2 trees use the same account index for tree and queue)",
+  6042: "Light state tree account discriminator does not match the selected tree account",
+  6043: "Light Protocol proof verification failed (Light SDK/cluster version mismatch)",
 };
 
 export function errorCode(err: unknown): number | undefined {

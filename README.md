@@ -1,12 +1,19 @@
 # ZKP Voting System
 
-A privacy-preserving, cryptographically verifiable voting system on Solana. Ballots
-are **ElGamal-encrypted** and stored as **ZK-compressed accounts**, so a vote is
-private and cheap. A **Groth16 circuit** proves each ballot is cast by an eligible
-voter exactly once, and a second circuit proves that the published **tally is the
-correct decryption** of the ballots the chain actually recorded. Once the voter root
-is frozen, a dishonest administrator cannot add voters or forge ballots or totals
-without detection.
+A Solana devnet demonstration of a voting protocol using ElGamal-encrypted ballots,
+Light Protocol V2 compressed accounts, and Groth16 proofs verified by Sunspot
+programs. The voting circuit checks a ballot against a frozen voter-list root and
+prevents reuse of the same nullifier; the tally circuit checks published totals
+against the transcript recorded by the program.
+
+This is not production-ready; no independent security audit is documented in
+this repository. The administrator chooses the voter list and can decrypt
+individual ballots with the tally secret key. The
+default vote prover sends its witness, including the voter secret, to the app
+server. The tally circuit supports at most eight ballots per position, and
+verifier-matched proving artifacts are not included in the repository. See
+[Security model & threat analysis](#security-model--threat-analysis),
+[Known limitations](#known-limitations), and the [frontend guide](#frontend-app).
 
 ---
 
@@ -39,9 +46,8 @@ without detection.
 The system is split into two layers that reinforce each other:
 
 - **Layer 1 (on-chain)** — an Anchor Solana program (`zkp_voting`) that manages
-  elections, freezes the registered-voter Merkle root, accepts ballots via the
-  Light Protocol V2 ZK-compression stack, and — after the last change — also
-  **re-derives a transcript** of every ballot so a tally can be checked.
+  elections, freezes the submitted voter-list Merkle root, accepts ballots via
+  Light Protocol V2 ZK-compression, and records a transcript of accepted ballots.
 - **Layer 2 (off-chain circuits)** — Noir circuits compiled to Groth16 and
   verified on-chain through **Sunspot** verifier programs:
   - `voting_circuit` — proves a ballot is valid (eligibility, one-vote,
@@ -49,15 +55,19 @@ The system is split into two layers that reinforce each other:
   - `tally_circuit` — proves the published `totals` are the decryption of the
     exact set of ballots the chain folded into its transcript.
 
-A voter's **secret (`s`) never leaves their device**; the ballot is only ever
-published in encrypted form. The election secret key (`sk`) stays **off-chain**
-with the tally authority, but because the tally is re-derived by a verified
-circuit, a dishonest (or compromised) administrator cannot publish fake totals.
+The ballot ciphertext is submitted encrypted. However, the default `NodeProver`
+posts the vote witness (including `s`) to `/api/prove` on the app server; do not
+assume the voter secret remains on the device. The tally secret key (`sk`) is
+kept off-chain by the tally authority, but anyone who obtains it can decrypt the
+ballots. The on-chain tally proof checks the totals against the stored transcript,
+subject to the verifier, circuit, and trusted-setup assumptions described below.
 
-> **Status:** the protocol, the Anchor/Light test suite, and the Next.js frontend
-> are complete. Everything runs end-to-end: the admin console creates elections and
-> freezes the voter list, voters cast encrypted ballots through a relayer, and the
-> admin posts a circuit-verified tally that anyone can inspect.
+> **Deployment status:** the program and verifier IDs in this repository target
+> Solana devnet. The repository contains source code and test instructions, not
+> the generated Sunspot proving artifacts. A successful devnet vote has been
+> exercised, but a checkout cannot generate proofs for the deployed tally verifier
+> unless the matching tally proving artifacts are supplied. This is a demo, not a
+> production election system.
 
 ## Trust model at a glance
 
@@ -66,7 +76,7 @@ circuit, a dishonest (or compromised) administrator cannot publish fake totals.
 | Voter eligibility | The frozen Merkle root (published by the admin before voting) | `voting_circuit` proves membership without revealing the leaf |
 | One vote per voter | The nullifier is unique per `(secret, election, position)` | On-chain replay is impossible: the nullifier is part of the compressed-account seed |
 | Ballot integrity | The ciphertext a voter publishes matches their proven choice | `voting_circuit` re-encrypts the choice and binds its commitment |
-| Ballot privacy | Ciphertexts are ElGamal; only `sk` decrypts them | `sk` is never on-chain; ballots are ZK-compressed |
+| Ballot privacy | Ciphertexts are ElGamal; anyone holding `sk` can decrypt them | `sk` is not on-chain; the default vote prover sends the voter witness to the app server |
 | Tally correctness | The admin posts `totals` | Layer-1 transcript + `tally_circuit` re-derive the tally on-chain |
 | Verifier programs | Groth16 verifying keys are correct | Pinned program IDs; keys are compiled into the verifier `.so` |
 
@@ -79,7 +89,7 @@ circuit, a dishonest (or compromised) administrator cannot publish fake totals.
 | One vote per voter | — | The nullifier is the compressed-account seed (no replay) |
 | Tally | `sk` is held by one tallier (who can decrypt individual ballots) | `totals` must decrypt the on-chain transcript via `tally_circuit` |
 | Verifier programs | Deployment of the `.so` (upgrade authority) | Program IDs are pinned; keys are baked into the `.so` |
-| Proving keys | Unsafe `sunspot setup` (local only) | — |
+| Proving keys | Must match the verifier deployed for the circuit | A newly generated setup will not match a pinned verifier |
 
 ---
 
@@ -88,7 +98,7 @@ circuit, a dishonest (or compromised) administrator cannot publish fake totals.
 ```
                  Voter (browser — Next.js `app/`)
       id+password → secret s → leaf, nullifier, ElGamal ballot
-      proves voting_circuit (Noir → Groth16, via Sunspot)
+      browser prepares witness; default NodeProver sends it to app server
                               │  proof + ciphertext (xs + parity) + nullifier
                               │  (relayer signs + pays; voter pubkey stays off-chain)
                               ▼
@@ -104,7 +114,7 @@ circuit, a dishonest (or compromised) administrator cannot publish fake totals.
                 │ CPI (Light V2)                    │ invoke (Sunspot)
                 ▼                                   ▼
    Light Protocol V2                      Sunspot Groth16 verifiers
-   (one compressed BallotAccount        voting verifier  9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj
+   (one compressed BallotAccount        voting verifier  BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV
     per ballot, indexed off-chain)      tally  verifier  AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav
 
         Off-chain (Noir workspace, circuits/)
@@ -113,7 +123,8 @@ circuit, a dishonest (or compromised) administrator cannot publish fake totals.
 
 Two proofs are generated off-chain and verified on-chain:
 
-1. **Vote proof** — per ballot, generated on the voter's device.
+1. **Vote proof** — per ballot; with the default NodeProver, the app server
+   generates it after receiving the witness from the browser.
 2. **Tally proof** — once per position, generated by the tally authority (who
    holds `sk`) from the ballots the chain already recorded.
 
@@ -138,7 +149,7 @@ ZKP-Voting-System/
 │   ├── tally_circuit/               # the tally-correctness proof (Layer 2)
 │   │   ├── Nargo.toml
 │   │   └── src/main.nr              # + 10 nargo tests
-│   ├── target/                      # build artifacts (gitignored, regenerated)
+│   ├── target/                      # gitignored build artifacts; verifier-matched keys must be supplied
 │   └── vendor/poseidon/             # vendored Noir Poseidon (circomlib-compatible)
 │
 ├── zkp-voting/                      # Anchor project (Layer 1 + tests)
@@ -163,7 +174,7 @@ ZKP-Voting-System/
         ├── adversarial.ts           # PDA seed-boundary tests (no validator)
         └── README.md                # test-suite docs + runbook
 │
-└── app/                              # Next.js frontend (App Router)
+├── app/                              # Next.js frontend (App Router)
     ├── public/idl/zkp_voting.json    # Anchor IDL (keep in sync with zkp-voting/)
     ├── public/proving/               # staged circuit artifacts for the WASM prover
     ├── src/app/
@@ -179,6 +190,8 @@ ZKP-Voting-System/
     │   └── manifest.ts               # election manifest schema + parser
     ├── src/components/               # wallet providers, topbar, stepper
     └── prisms/prover/                # gnark → WASM prover source (Go)
+│
+└── scripts/                          # verifier deployment/immutability checks
 ```
 
 ---
@@ -261,7 +274,8 @@ totals decrypt that transcript (see
 
 ## Layer 1 — the Solana program
 
-Program ID: **`4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA`** (Anchor, in
+Program ID: **`HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5`**, deployed to
+Solana devnet and also loadable at the same address in the local test validator (Anchor, in
 `programs/zkp-voting/src/{lib.rs, ballot.rs}`).
 
 ### Accounts
@@ -338,23 +352,29 @@ byte-for-byte identical primitives.
 
 ### Verifier programs
 
-`sunspot deploy <vk>` compiles the Groth16 verifying key into a Solana program.
+`sunspot deploy <vk>` compiles the Groth16 verifying key into a Solana program
+binary and keypair; it does not submit a transaction. Deploy the generated
+`<name>.so` with `solana program deploy --program-id <name>-keypair.json` on the
+intended cluster, then pin the printed program ID in the Anchor program and app.
 Two verifiers are deployed and pinned:
 
 | Circuit | Verifier program ID |
 |---|---|
-| `voting_circuit.vk` | `9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj` |
-| `tally_circuit.vk` | `AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav` |
+| `voting_circuit.vk` | `BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV` (devnet) |
+| `tally_circuit.vk` | `AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav` (devnet) |
 
-Both must be preloaded into the test validator at these addresses (see the
-runbook), and the program checks them with an `executable` + pinned-address
+Both must be available at these addresses on the selected cluster. The local
+test-validator runbook loads the local verifier binaries at these pinned
+addresses; the deployed program checks them with an `executable` + pinned-address
 account constraint (`InvalidVerifier` otherwise).
 
-These IDs are **per-network**: they are `SUNSPOT_VERIFIER_ID` and
-`SUNSPOT_TALLY_VERIFIER_ID` in `lib.rs` (and mirrored in the test fixtures), so
-re-point them for devnet/mainnet. Deploy immutably with
-`solana program set-upgrade-authority <ID> --final` and verify with
-`scripts/check-verifier-immutability.sh`.
+These are the verifier IDs configured for devnet. Confirm that the programs are
+available at those addresses on the cluster before running tests or the app.
+Other clusters require verifier programs built for that cluster and matching IDs
+in `lib.rs`, the app, and test fixtures. The repository's
+`scripts/verify-verifier-ids.sh` checks configured deployment bytes and reports
+authority status; `scripts/check-verifier-immutability.sh` checks whether the
+verifier programs are immutable. Revoking an upgrade authority is irreversible.
 
 ## Tally correctness
 
@@ -370,18 +390,19 @@ self-reported `transcript_hash`. Two changes make the tally verifiable:
    one-hot**, then sums the bits and asserts the sum equals the public `totals`.
 
 The transcript is not admin-supplied: `cast_vote` folds the commitment it computed
-from the stored ciphertext (`xs` + parity), so the tally proof can only succeed
-against the exact commitments the chain recorded.
+from the submitted ciphertext (`xs` + parity), so the tally proof can only succeed
+against the ordered commitments the program recorded.
 
-`post_tally` therefore stores `totals` only when the proof verifies against the
-**on-chain** transcript. An admin who fabricates totals has no valid proof; an
-admin who omits or reorders ballots breaks the transcript fold.
+`post_tally` stores `totals` only when the proof verifies against the **on-chain**
+transcript and the configured verifier accepts it. This does not establish that
+the admin enrolled every eligible voter or that the tally key stayed secret.
 
-The circuit has a **fixed capacity `N_BALLOTS = 8`**. Ballots beyond the
-on-chain `ballot_count` are padding slots (still valid one-hot encryptions, but
-excluded from both the fold and the sum), so one circuit serves any election of
-≤ 8 ballots; larger elections need a larger setup. Decrypting needs `sk`, which
-stays off-chain with the tally authority.
+The circuit and program have a **fixed capacity of eight ballots per position**
+(`N_BALLOTS` / `TALLY_CAPACITY`). Ballots beyond the on-chain `ballot_count` are
+padding slots, excluded from the transcript fold and sum. The program rejects
+additional ballots; elections with more than eight ballots per position are not
+supported by this configuration. Decrypting needs `sk`, which is held off-chain
+by the tally authority.
 
 ### Why not homomorphic on-chain aggregation?
 
@@ -399,60 +420,64 @@ cost is independent of constraint count) is the pragmatic verifiable design toda
 |---|---|
 | ElGamal over Grumpkin | Additive homomorphism + fits the BN254 scalar field used by Noir's embedded curve |
 | Exponential ElGamal (`b·G` in the exponent) | Decryption = a point compare (`C2 − sk·C1` is `G` or `∞`); no discrete-log per ballot |
-| `sk` stays off-chain | Decryption is the only operation needing it; keeping it off-chain avoids exposing it to the world |
-| Per-slot randomness from `TAG_RAND` | One remembered secret, independent ciphertexts per slot (no bit leakage between slots) |
+| `sk` stays off-chain | The key is not written on-chain, but the tally authority can decrypt ballots and a leaked key compromises ballot secrecy |
+| Per-slot randomness from `TAG_RAND` | Domain-separated randomness for each ciphertext slot |
 | Poseidon everywhere | SNARK-friendly **and** available as a Solana syscall, so Noir ↔ Rust ↔ TS can agree exactly |
-| Domain tags | Same value can never be mistaken across leaf/nullifier/randomness/commitment/transcript roles |
+| Domain tags | Separate hashing contexts for leaf/nullifier/randomness/commitment/transcript roles |
 | Frozen root **before** voting starts | Prevents an admin from adding voters mid-election (`FreezeWindowClosed`) |
-| Compressed ballots (Light V2) | One cheap on-chain slot per vote; the nullifier seed makes replay structurally impossible |
+| Compressed ballots (Light V2) | Ballots use compressed accounts; the nullifier seed prevents reusing the same nullifier |
 | Layer-1 transcript | Turns "the chain accepted some ballots" into a single hash the tally proof can bind to |
 | Separate tally verifier program | Each Groth16 verifying key is compiled into its own program, so two circuits = two pinned IDs |
 | `N_BALLOTS = 8` fixed capacity | Verification cost is independent of constraints, so a modest fixed capacity keeps setup/proving practical |
-| Unsafe `sunspot setup` | Documented as local-only; production needs a real trusted setup (MPC) |
+| Sunspot `setup` | Unsafe for production; it generates a key that will not match a pinned verifier |
 | Relayer signs + pays `cast_vote` | The voter's public key never appears on-chain — only the encrypted ballot + nullifier. The relayer key is server-only, never `NEXT_PUBLIC_*` |
 | Election manifest (JSON) | One shareable artifact (root, `pk`, aspirants, leaves); the voter re-checks `root` against the on-chain frozen root, so an untrusted manifest can't smuggle in voters |
-| One `Prover` interface, two backends | `NodeProver` → `/api/prove` (fastest demo); `WasmProver` → gnark-in-a-worker (secret stays on-device). Selected by `NEXT_PUBLIC_PROVER` |
-| Server-side tally proving | The admin already holds `sk`, so in-browser tally proving adds cost with no privacy gain |
+| One `Prover` interface, two backends | `NodeProver` → `/api/prove` (default; witness is sent to the server). `WasmProver` is selectable but vote proving is not end-to-end because browser witness generation is unfinished |
+| Server-side tally proving | The current admin flow sends the tally witness, including `sk`, to `/api/prove`; this is a development/demo tradeoff, not a privacy-preserving deployment |
 | Password-derived `s` (demo) | `s = Poseidon(SHA256(id), SHA256(password))`; the admin supplies the password so can re-derive any secret — acceptable for the demo, not production (use self-enrollment/passkeys) |
-| Chain clock, not wall clock | The Light validator's `Clock` drifts ahead; the app reads `getBlockTime` for window checks |
-| Scan program history for events | `getSignaturesForAddress` omits LUT-loaded accounts on some RPCs; the program itself is always a static account key, so `events.ts` scans it and filters by position |
+| Chain clock, not wall clock | The app uses chain block time for election-window checks |
+| Scan program history for events | `events.ts` scans program transactions and filters `BallotCast` events by position |
 
 ---
 
 ## Security model & threat analysis
 
-### What is *proven*
+### What the configured circuits check
 
-- A ballot can only be cast by a registered voter (Merkle membership proof).
-- The same voter cannot vote twice in a position (nullifier in the account seed).
+- A ballot's secret-derived leaf has a valid path to the configured frozen root.
+- The same secret-derived nullifier cannot be used twice in a position.
 - The published ciphertext is the encryption of the proven one-hot choice.
-- The published tally equals the decryption of the exact ballots the chain folded.
+- The published tally matches the decryption of the ballots in the transcript.
 
 ### What is *enforced on-chain*
 
 - Voting window, frozen root, canonical fields, pinned verifier programs.
 - `Σtotals ≤ ballot_count` and inactive candidates must be `0`.
 
-### Adversary model / what a malicious actor can *not* do
+### Limits of those checks
 
-- **Forge a ballot** without a valid Merkle path (proof fails).
-- **Double-vote** — the nullifier address already exists (Light CPI rejects).
-- **Replay** a valid ballot elsewhere — nullifier binds `(election, position)`.
-- **Tamper with a ciphertext** — it would no longer match the proven commitment.
-- **Post fake totals** — no `tally_circuit` proof exists for a transcript it
-  doesn't decrypt to.
-- **Use a wrong verifier/key** — verifier IDs are pinned; `pk_hash` binds the key.
+- These checks rely on the configured circuit and verifier matching the reviewed
+  source and the expected trusted setup. This repository does not document an
+  independent security audit.
+- The admin selects and freezes the voter list, can withhold/censor the manifest,
+  and controls the tally secret key. The protocol does not prove that the list is
+  complete or protect ballot secrecy from the tally authority.
+- Program/verifier upgrade authorities and the app server remain part of the
+  trust model; a pinned program ID alone does not establish immutability.
 
 ### Residual trust & known gaps
 
-- **Trusted setup is unsafe** (local testing only).
+- **Trusted setup:** Sunspot's `setup` procedure is unsafe for production use.
+  The exact setup provenance of a deployment must be established separately.
 - **Light Protocol prover/validators** are trusted for compression correctness.
 - **Ballot secrecy vs. a corrupt tally authority** — the authority can decrypt
   individual ballots (`sk`); the transcript/tally design guarantees *correctness*,
   not *authority-blindness*. Mixnets/resharing would be needed for stronger
   privacy from the tallier.
 - **Receipt-freeness/coercion-resistance** are not implemented.
-- **`N_BALLOTS` capacity** is fixed per setup.
+- **`N_BALLOTS` capacity** is fixed at eight ballots per position in this build.
+- **Default prover privacy:** `/api/prove` receives the vote witness, including
+  the secret derived from the voter's credentials.
 
 ### The security test suites
 
@@ -472,8 +497,12 @@ cost is independent of constraint count) is the pragmatic verifiable design toda
 
 ## Build & test runbook
 
-The full pipeline (one-time + per-run). Commands assume `noirup` has
-`1.0.0-beta.22` active and `sunspot`, `light`, and `anchor` are on `PATH`.
+The commands below assume the tool versions in [TOOLCHAIN.md](./TOOLCHAIN.md).
+Generated files under `circuits/target/` are ignored by Git. Proof generation
+requires proving artifacts for the configured verifier keys. In particular,
+`tally_circuit.ccs` and `tally_circuit.pk` must be the matching pair for the
+deployed tally verifier; obtain them from the original setup backup. They are
+not included in this repository.
 
 ### 0. Install dependencies (once)
 
@@ -482,56 +511,61 @@ cd zkp-voting && npm install   # or yarn; Anchor + test dependencies
 cd client   && npm install     # poseidon-lite etc. for the input generators
 ```
 
-### 1. Circuits (Noir → Sunspot artifacts)
+### 1. Run circuit and Rust unit tests
 
 ```bash
 cd circuits
-nargo test --workspace                                # 35 tests (voting 25 + tally 10)
+nargo test --workspace
 nargo compile --package voting_circuit
 nargo compile --package tally_circuit
 cd ../zkp-voting
-node client/make_inputs.mjs                           # writes voting fixture + witness
-
-sunspot compile ../circuits/target/voting_circuit.json
-sunspot setup   ../circuits/target/voting_circuit.ccs
-sunspot prove   ../circuits/target/voting_circuit.json ../circuits/target/voting_circuit.gz \
-                ../circuits/target/voting_circuit.ccs ../circuits/target/voting_circuit.pk
-GNARK_VERIFIER_BIN=/path/to/sunspot/gnark-solana/crates/verifier-bin \
-  sunspot deploy ../circuits/target/voting_circuit.vk
-
-sunspot compile ../circuits/target/tally_circuit.json
-sunspot setup   ../circuits/target/tally_circuit.ccs
-GNARK_VERIFIER_BIN=/path/to/sunspot/gnark-solana/crates/verifier-bin \
-  sunspot deploy ../circuits/target/tally_circuit.vk
+cargo test --lib
 ```
 
-`sunspot deploy` writes `<name>.so` + `<name>-keypair.json` **next to the `.vk`**
-and prints the verifier program id. The tally verifier id must match
-`SUNSPOT_TALLY_VERIFIER_ID` in `lib.rs`; the voting verifier matches
-`SUNSPOT_VERIFIER_ID`.
+### 2. Generate proofs and run validator-backed tests
 
-> **Do not re-run `sunspot setup` (or `deploy`) unless you intend to change the
-> circuit.** `setup` performs a fresh, *non-deterministic* trusted setup, so the
-> resulting `.vk` (and the verifier `.so` built from it) will no longer match the
-> pinned IDs; you would then have to redeploy and re-pin both verifier IDs and
-> regenerate all proofs. To regenerate proofs for the *current* circuit, run only
-> `sunspot compile` + `sunspot prove` + the `prepare:*` scripts.
-
-### 2. Build the app program
+The `prepare:*` scripts run `nargo execute` and `sunspot prove`. They require
+the `.ccs` and `.pk` files that match the verifier programs configured in the
+Anchor program. The witness `.gz` is generated during execution. If the matching
+proving key is missing, restore it from its original backup; running
+`sunspot setup` creates a different key and will not produce proofs accepted by
+the already deployed verifier.
 
 ```bash
 cd zkp-voting
-cargo test --lib        # Rust unit tests (15)
-anchor build            # regenerates target/idl + target/types + deploy .so
+npm install
+npm run prepare:test-proof
+npm run prepare:tally-proof
 ```
 
-### 3. Start the Light validator with both verifiers + the app
+For validator-backed suites, start `light test-validator` with the application
+program and verifier binaries loaded at the configured IDs, then run the
+commands in [Developer workflow](#developer-workflow). The validator and
+verifier binaries are generated/deployment artifacts and are not supplied by
+this repository.
+
+Do not run `sunspot setup` or deploy a newly generated verifier as a way to
+recover missing proving files. Replacing a verifier requires a deliberately
+coordinated verifier/program update and does not change results or proofs for
+an existing election.
+
+### 3. Build the Anchor program and sync the IDL
+
+```bash
+cd zkp-voting
+anchor build            # regenerates target/idl + target/types + deploy .so
+cp target/idl/zkp_voting.json ../app/src/idl/zkp_voting.json
+cp target/idl/zkp_voting.json ../app/public/idl/zkp_voting.json
+cp target/types/zkp_voting.ts ../app/src/idl/zkp_voting.ts
+```
+
+### 4. Start the Light validator with both verifiers + the app
 
 ```bash
 light test-validator \
-  --sbf-program 9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj ../circuits/target/voting_circuit.so \
+  --sbf-program BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV ../circuits/target/voting_circuit.so \
   --sbf-program AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav ../circuits/target/tally_circuit.so \
-  --sbf-program 4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA target/deploy/zkp_voting.so
+  --sbf-program HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5 target/deploy/zkp_voting.so
 ```
 
 Keep it running, then in another terminal:
@@ -570,10 +604,10 @@ Environment variables used by the suites:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `ANCHOR_PROVIDER_URL` | `http://127.0.0.1:8899` | validator RPC |
+| `ANCHOR_PROVIDER_URL` | `http://127.0.0.1:8899` | local test-validator RPC |
 | `ANCHOR_WALLET` | `~/.config/solana/id.json` | payer |
-| `LIGHT_INDEXER_URL` | `http://127.0.0.1:8784` | compressed-account indexer |
-| `LIGHT_PROVER_URL` | `http://127.0.0.1:3001` | Light ZK prover |
+| `LIGHT_INDEXER_URL` | `http://127.0.0.1:8784` | local test-validator indexer |
+| `LIGHT_PROVER_URL` | `http://127.0.0.1:3001` | local test-validator prover |
 | `ZKP_TEST_ELECTION_ID` | `Date.now()` | override the fixture election id |
 
 ---
@@ -582,8 +616,8 @@ Environment variables used by the suites:
 
 | Constant | Value | Where |
 |---|---|---|
-| Program ID | `4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA` | `lib.rs` / `Anchor.toml` |
-| Voting verifier | `9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj` | `lib.rs` |
+| Program ID | `HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5` | `lib.rs` / `Anchor.toml` |
+| Voting verifier | `BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV` (devnet) | `lib.rs` |
 | Tally verifier | `AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav` | `lib.rs` |
 | `K_MAX` | 4 | `lib.rs`, `voting_lib` |
 | `DEPTH` | 24 (⇒ `2²⁴` voters) | `voting_lib` |
@@ -598,12 +632,13 @@ Environment variables used by the suites:
 
 ## Frontend (`app/`)
 
-A Next.js 14 (App Router) TypeScript app that drives the whole system end to end.
+A Next.js 14 (App Router) TypeScript demonstration app for creating elections,
+casting votes, and viewing on-chain transcript/tally state.
 Three routes:
 
-- **`/admin`** — create an election, add positions, enroll + freeze voters, post the tally.
+- **`/admin`** — create an election or reopen one created by the connected authority, then inspect status and post the tally.
 - **`/vote`** — load the election manifest, identify, choose, review, cast.
-- **`/results`** — inspect the live transcript and the on-chain verified tally.
+- **`/results`** — upload or paste the election manifest to inspect the live transcript and on-chain verified tally.
 
 ### Why the frontend is built this way
 
@@ -611,8 +646,8 @@ Three routes:
 |---|---|
 | **Relayer signs + pays `cast_vote`** | The voter's public key never appears on-chain — only the encrypted ballot + nullifier. The relayer wallet (`RELAYER_SECRET_KEY`) is server-only, never `NEXT_PUBLIC_*` |
 | **Election manifest (JSON)** | One shareable artifact (root, `pk`, aspirants, leaves). The voter re-checks `root` against the on-chain frozen root, so an untrusted manifest can't smuggle in voters |
-| **One `Prover` interface, two backends** | `NodeProver` → `/api/prove` (fastest demo); `WasmProver` → gnark-in-a-worker (secret stays on-device). Selected by `NEXT_PUBLIC_PROVER` |
-| **Tally proving stays server-side** | The admin already holds `sk`, so in-browser tally proving adds cost with no privacy gain |
+| **One `Prover` interface, two backends** | The default `NodeProver` sends the witness to `/api/prove`. A WASM backend exists, but browser witness generation is unfinished and vote proving is not end-to-end there. |
+| **Server-side tally proving (demo)** | The current route sends the tally witness, including `sk`, to the app server; a browser prover could avoid that disclosure, but is not implemented |
 | **Password-derived `s` (demo)** | `s = Poseidon(SHA256(id), SHA256(password))`. The admin supplies the password, so the admin can re-derive any secret — acceptable for the demo, not production (use self-enrollment/passkeys) |
 | **Chain clock, not wall clock** | The Light validator's `Clock` drifts ahead; the app reads `getBlockTime` for window checks |
 | **Scan program history for events** | `getSignaturesForAddress` omits LUT-loaded accounts on some RPCs; the program itself is always a static account key, so `events.ts` scans it and filters by position |
@@ -620,12 +655,12 @@ Three routes:
 ### Proving backends
 
 - **`NodeProver` (default)** — `POST /api/prove` runs `nargo execute` + `sunspot prove`
-  on the server. Fastest path to a working demo, but the witness (voter secret)
-  leaves the browser. Needs `nargo` + `sunspot` on `PATH` and `SUNSPOT_CIRCUITS_DIR`.
-- **`WasmProver`** — the gnark prover compiled to WASM (`prisms/prover/`), run in a
-  Web Worker. The `Prover` interface is shared; only the vote witness goes on-device.
-  The "Problem B" half (browser `nargo execute` witness via `noir_js`) is still
-  pending, so `proveVote` is not wired end-to-end yet.
+  on the app server. The server receives the witness, which includes the voter's
+  secret. It needs `nargo`, `sunspot`, `SUNSPOT_CIRCUITS_DIR`, and matching
+  proving artifacts on the server.
+- **`WasmProver`** — a gnark prover compiled to WASM and run in a Web Worker is
+  present, but generating the Noir witness in the browser is unfinished. The
+  vote flow is therefore not currently end-to-end with this backend.
 
 ### The relayer
 
@@ -638,110 +673,165 @@ tree, validity proof, LUT, `1_400_000` compute budget) lives in
 ### Admin flow (`/admin`)
 
 1. **Connect** — Phantom or a pasted base58 secret key (the key becomes the election authority).
-2. **Election** — name + "starts in" delay + duration; generates a fresh tally key
-   (`generateTallyKey`) and calls `initialize_election`.
+2. **Election** — reopen an election from the connected authority's list, or create one
+   with a name, start delay, and duration. Creating generates a fresh tally key
+   (`generateTallyKey`) and calls `initialize_election`; back up the displayed key.
 3. **Positions** — one or more races, each with 1–4 aspirants; calls `initialize_position`.
 4. **Voters** — one `name,id,password` per line; derives each leaf, builds the Merkle
    tree, then `freeze_voter_root` (must happen before voting starts).
-5. **Status & tally** — lists this authority's elections; per position, "Auto tally"
-   gathers `BallotCast` events in cast order (`fetchBallotCasts`), decrypts with `sk`,
-   builds the `tally_circuit` witness (`buildTallyWitness`), proves, and `post_tally`s.
+5. **Status & tally** — reopen an election to load its on-chain positions and current
+   results. To auto-tally after reopening, enter the backed-up secret key; the app checks
+   it against the election's public key. Auto tally gathers `BallotCast` events in cast
+   order (`fetchBallotCasts`), decrypts with `sk`, builds the `tally_circuit` witness
+   (`buildTallyWitness`), proves, and `post_tally`s.
 
 ### Voter flow (`/vote`)
 
-1. **Load & connect** — paste the manifest; the app re-checks `root` against the
-   on-chain frozen root and confirms the list is locked.
+1. **Load & connect** — upload or paste the manifest; the app re-checks `root`
+   against the on-chain frozen root and confirms the list is locked.
 2. **Identify** — id + password → `deriveSecret` → leaf → Merkle path (all in-browser).
 3. **Choose** — one aspirant per position.
-4. **Review** — for each position the browser builds the witness, generates the
-   Groth16 proof, and submits the public payload to the relayer.
+4. **Review** — the browser prepares the witness and requests a Groth16 proof
+   from the configured prover. With the default `NodeProver`, the witness is sent
+   to the app server; the public ballot payload is then submitted to the relayer.
 5. **Done** — success banner with the transaction signature and nullifier.
 
 ### Results flow (`/results`)
 
-Paste the manifest → the app reads `BallotTranscript` (ballot count) and
-`TallyResult` (published totals) per position and renders them side by side.
+Upload or paste the manifest → the app reads `BallotTranscript` (ballot count) and
+`TallyResult` (published totals) per position and renders them side by side. The
+manifest supplies position titles and candidate labels; when an admin reopens an
+election from chain without its manifest, the admin page can only show generic
+position/candidate labels. It does not prevent tallying.
 ## Frontend setup & user guide
 
 ### Prerequisites
 
 - Node ≥ 20 (use 22), npm.
-- For the default dev prover: `nargo` (`1.0.0-beta.22`) + `sunspot` on `PATH`, and
-  the circuit artifacts built (`circuits/target/*.ccs`, `*.pk`, `*.json`, `*.gz`).
+- For the default server prover: `nargo` (`1.0.0-beta.22`) + `sunspot` on the
+  server `PATH`, `SUNSPOT_CIRCUITS_DIR`, and the circuit JSON plus `.ccs` and
+  `.pk` proving artifacts. The `.pk` must match the configured verifier.
+  `nargo execute` generates the witness `.gz`.
 - A running validator with the app + both verifiers preloaded (see the runbook).
 
-### Local setup
+### Devnet app setup
 
 ```bash
-# 1. From the runbook: start the Light validator (app + voting/tally verifiers).
-
-# 2. Configure the app
+# Configure the app for the deployed devnet programs and Light services.
 cd app
 cp .env.local.example .env.local
 # edit .env.local:
-#   SUNSPOT_CIRCUITS_DIR=/absolute/path/to/ZKP-Voting-System/circuits
-#   RELAYER_SECRET_KEY=[ ...64 ed25519 numbers... ]
+#   set a restricted Helius API key in the three NEXT_PUBLIC_* URLs
+#   SUNSPOT_CIRCUITS_DIR=/absolute/path/to/zk-ballot-solana/circuits
+#   RELAYER_SECRET_KEY=[ ...64 ed25519 numbers for a dedicated relayer... ]
 
-# 3. Fund the relayer (the address derived from RELAYER_SECRET_KEY)
-solana airdrop 2 <relayer-pubkey>   # or fund it on devnet / via Phantom
+# Fund the dedicated relayer address on devnet; do not use the program upgrade authority.
+solana airdrop 2 <relayer-pubkey> --url https://api.devnet.solana.com
 
-# 4. Install, verify crypto parity, run
+# Install, verify crypto parity, run.
 npm install
-npm run check          # 11/11 crypto fixtures must pass
+npm run check          # crypto parity checks
 npm run dev            # http://localhost:3000
 ```
 
 ### Devnet deployment
 
+The voting program was upgraded on devnet, and a successful vote was confirmed
+in project testing. The verifier IDs are pinned in source for that deployment.
+On-chain deployment and upgrade-authority status can change; verify them on the
+cluster before relying on them. The project's documented Sunspot setup is
+unsafe for production use, and no independent audit is documented here.
+
+Casting a vote also requires a ZK-Compression-capable devnet RPC/indexer/prover
+and a separately funded relayer wallet. The sample config uses Helius; replace
+`YOUR_HELIUS_API_KEY` with a restricted key. Because these URLs use
+`NEXT_PUBLIC_*`, that key is visible to app users. Keep `RELAYER_SECRET_KEY`
+server-only and do not reuse the program upgrade-authority wallet. Do not commit
+`.env.local`, provider credentials, or wallet secret keys.
+
 ```bash
 # Point the app at devnet + the Light devnet services, and your deployed IDs:
 #   NEXT_PUBLIC_RPC_URL, NEXT_PUBLIC_LIGHT_INDEXER_URL, NEXT_PUBLIC_LIGHT_PROVER_URL
 #   NEXT_PUBLIC_PROGRAM_ID, NEXT_PUBLIC_VOTING_VERIFIER_ID, NEXT_PUBLIC_TALLY_VERIFIER_ID
+#   RELAYER_SECRET_KEY (a dedicated, funded devnet relayer)
 
 cd app
 npm run build
 npm run start          # or deploy to Vercel with the same env vars
 ```
 
-Deploy the program with `anchor deploy` and the verifiers with `sunspot deploy`
-(immutably — `set-upgrade-authority --final`), then re-pin the IDs in both `lib.rs`
-and `.env.local`. The dev prover still needs `nargo`/`sunspot` reachable from the
-server; for a fully on-device voter, build and select the WASM prover.
+The devnet program and verifier IDs are pinned in `lib.rs`, the app
+configuration, and the generated IDL. Replacing a verifier requires a
+coordinated verifier/program update. The default prover needs `nargo` and
+`sunspot` on the app server. The WASM vote flow is not yet a complete
+on-device alternative.
+
+If a Light Protocol upgrade makes the deployed voting program's Light SDK
+incompatible, update the pinned `light-sdk` and Anchor versions to match the
+cluster's Light System Program release in
+`zkp-voting/programs/zkp-voting/Cargo.toml` and `zkp-voting/Anchor.toml`, rebuild,
+sync the generated IDL files, then upgrade the same devnet program ID with its
+upgrade-authority wallet:
+
+```bash
+cd zkp-voting
+anchor build --arch sbf
+cp target/idl/zkp_voting.json ../app/src/idl/zkp_voting.json
+cp target/idl/zkp_voting.json ../app/public/idl/zkp_voting.json
+cp target/types/zkp_voting.ts ../app/src/idl/zkp_voting.ts
+solana program deploy target/deploy/zkp_voting.so \
+  --program-id HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5 \
+  --url devnet --keypair ~/.config/solana/id.json
+```
+
+For batched V2 address trees, the tree and queue can be the same account; pass
+the same remaining-account index for both fields in `PackedAddressTreeInfo`.
 
 ### User guide
 
-**Admin.** Open `/admin`, connect a wallet, and walk the five-step wizard. Keep the
-tally key in the page (it is in-memory only — do not refresh between creating the
-election and posting the tally). Copy the manifest at the "Status" step and share it
-with voters. After voting ends, "Auto tally" each position and share the results link.
+**Admin.** Open `/admin`, connect the authority wallet, and create an election or
+open an existing one from the election list. Back up the displayed tally secret
+key securely; it is not recoverable from the chain. For a reopened election,
+restore the backed-up key in the status screen. Auto tally also requires the
+matching tally proving artifacts and a configured prover. Share the downloaded
+manifest with voters. Position and candidate labels are not stored on-chain, so
+reopened elections without their manifest show generic labels.
 
-**Voter.** Open `/vote`, connect any wallet (it is *not* used on-chain — the relayer
-pays), paste the manifest, enter the id + password the admin gave you, choose one
-aspirant per position, review, and cast. You'll see a success banner with your
-transaction signature; your choices are encrypted and only the tally reveals totals.
+**Voter.** Open `/vote`, connect any wallet (it is not used as the transaction
+signer; the relayer pays), load the manifest, enter the id and password supplied
+by the admin, choose one candidate per position, review, and cast. With the
+default prover, the witness including the derived voter secret is sent to the
+app server. Ballots are encrypted on-chain, but the tally authority can decrypt
+individual ballots if it has the tally secret key.
 
-**Observer.** Open `/results`, paste the manifest, and read the frozen-root
-fingerprint, per-position ballot count, and (once posted) the verified tally.
+**Observer.** Open `/results`, upload the election's `.json` manifest or paste its
+contents, and read the frozen-root fingerprint, per-position ballot count, and
+(once posted) the verified tally.
 
 ---
 
 ## Known limitations
 
-- **Trusted setup is unsafe** — regenerate via a real MPC for production.
+- **Trusted setup:** the documented Sunspot `setup` procedure is unsafe for
+  production. Setup provenance for a deployed verifier is not independently
+  attested by this repository.
 - **Ballot cap at 8 per position** (`TALLY_CAPACITY` in `lib.rs`, mirroring the
-  tally circuit's `N_BALLOTS = 8`). This is a temporary stopgap: `cast_vote`
-  rejects the 9th ballot with `TallyCapacityReached`; the batch-aggregation tally
-  pipeline (planned) removes the cap entirely.
+  tally circuit's `N_BALLOTS = 8`); the program rejects a ninth ballot per
+  position with `TallyCapacityReached`.
 - **No receipt-freeness / coercion resistance / verifiable decryption shares** — `sk`
   is held by a single tallier.
 - **Password-derived voter secret** — the demo derives `s` from an admin-supplied
   id + password, so the admin (or anyone who learns the password) can re-derive a
   voter's secret. Production needs self-enrollment (share only the leaf) or a passkey.
-- **Dev-only proving path** — the default `NodeProver` sends the witness to
-  `/api/prove` (server-side `nargo` + `sunspot`); the on-device WASM prover still
-  needs its browser witness-generation half before it is fully private.
-- **Local/dev verifier programs** are compiled from the current `.vk`; redeploy
-  regenerates the program id, which must then be re-pinned in `lib.rs`.
+- **Default proving path** — the `NodeProver` sends the witness to `/api/prove`
+  (server-side `nargo` + `sunspot`). The WASM vote flow is incomplete because
+  browser witness generation is not wired end-to-end.
+- **Proving artifacts are not checked in.** Proof generation for a deployed
+  verifier requires the matching `.ccs` and `.pk`; a newly generated setup will
+  not match the verifier already pinned in this program.
+- **Verifier deployment and upgrade authority** must be checked on the target
+  cluster; the source's pinned ID alone does not establish current deployment or
+  immutability.
 - **Light Protocol V2** specifics (address tree id, CPI account layout) are pinned
   to the test environment used here.
 
@@ -762,7 +852,11 @@ fingerprint, per-position ballot count, and (once posted) the verified tally.
 - **`Account "transcript" not provided`** — `initialize_position` and `cast_vote`
   require the `BallotTranscript` PDA; derive it with seeds `["transcript", position]`.
 - **`InvalidVerifier`** — the verifier `.so` isn't preloaded at the pinned address,
-  or the pinned ID drifted after `sunspot deploy`.
+  or the pinned ID drifted after deploying the `.so` generated by `sunspot deploy`.
+- **Missing `tally_circuit.ccs` or `.pk`** — restore the original matching
+  artifacts from backup. Do not run `sunspot setup` to replace them; the new
+  proving key will not match the configured verifier. `nargo execute` generates
+  the witness `.gz`.
 - **Verifier id changed after redeploy** — update the matching `SUNSPOT_*_VERIFIER_ID`
   in `lib.rs`, re-`anchor build`, and reload the `.so`.
 
@@ -770,13 +864,8 @@ fingerprint, per-position ballot count, and (once posted) the verified tally.
 
 ## Disclaimer
 
-This is a reference implementation for demonstration and testing. It uses an
-**unsafe trusted setup** and is not audited. Do not use it for real elections
-without a production trusted setup, an independent audit, and a threat model
-that covers the residual-trust items above.
-
-
-
-
-
-
+This is a reference implementation for demonstration and testing. The documented
+setup procedure uses an unsafe trusted setup, and no independent audit is
+documented in this repository. Do not use it for real elections without a
+reviewed production setup, independent security audit, and a threat model that
+covers the residual-trust items above.

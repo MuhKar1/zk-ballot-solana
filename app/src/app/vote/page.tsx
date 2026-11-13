@@ -93,6 +93,16 @@ export default function VotePage() {
     }
   }
 
+  async function loadManifestFile(file: File | undefined) {
+    if (!file) return;
+    setActionError(null);
+    try {
+      setManifestText(await file.text());
+    } catch (e) {
+      setActionError(`Couldn't read the selected manifest file: ${friendlyError(e)}`);
+    }
+  }
+
   async function identify() {
     if (!manifest) return;
     setBusy(true);
@@ -234,8 +244,22 @@ export default function VotePage() {
 
           <div className="spacer" />
           <div className="field">
-            <label>Election manifest (JSON)</label>
-            <textarea className="textarea" value={manifestText} onChange={(e) => setManifestText(e.target.value)} />
+            <label htmlFor="manifest-file">Upload election manifest (.json)</label>
+            <input
+              id="manifest-file"
+              className="input"
+              type="file"
+              accept=".json,application/json"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                e.currentTarget.value = "";
+                void loadManifestFile(file);
+              }}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="manifest-text">Or paste election manifest (JSON)</label>
+            <textarea id="manifest-text" className="textarea" value={manifestText} onChange={(e) => setManifestText(e.target.value)} />
           </div>
           <button
             className="btn btn-primary btn-block"

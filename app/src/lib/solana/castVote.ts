@@ -134,7 +134,7 @@ export async function castVote(input: CastVoteInput): Promise<string> {
 
   const addressTreeInfo = {
     addressMerkleTreePubkeyIndex: 0,
-    addressQueuePubkeyIndex: 1,
+    addressQueuePubkeyIndex: addressTree.queue.equals(addressTree.tree) ? 0 : 1,
     rootIndex: validity.rootIndices[0],
   };
   const validityProof = {

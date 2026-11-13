@@ -61,40 +61,30 @@ npm run test:sunspot      # Sunspot verifier proof acceptance/rejection
 npm test                  # Full Anchor workflow
 ```
 
-## Local Sunspot Setup
+## Sunspot proving artifacts
 
-Sunspot v1 requires Noir `1.0.0-beta.22`; this circuit workspace pins its
-`1.0.0` compatibility version. The following setup is for local testing only:
-`sunspot setup` performs an unsafe trusted setup, so the generated keys must
-not be used for a production election.
+Proof-producing tests require `.ccs` and `.pk` files matching the verifier
+programs loaded at the pinned IDs. These generated artifacts live under
+`circuits/target/` and are not included in the repository. Restore the original
+matching files from backup before running `test:compressed` or `test:tally`.
+`nargo execute` generates the witness `.gz` as part of proof preparation.
 
-```bash
-noirup --version 1.0.0-beta.22
-cd circuits
-nargo test --workspace
-nargo compile --package voting_circuit
-nargo compile --package tally_circuit
-cd ../zkp-voting
-node client/make_inputs.mjs
-sunspot compile ../circuits/target/voting_circuit.json
-sunspot setup ../circuits/target/voting_circuit.ccs
-sunspot prove ../circuits/target/voting_circuit.json ../circuits/target/voting_circuit.gz ../circuits/target/voting_circuit.ccs ../circuits/target/voting_circuit.pk
-GNARK_VERIFIER_BIN=/path/to/sunspot/gnark-solana/crates/verifier-bin sunspot deploy ../circuits/target/voting_circuit.vk
-sunspot compile ../circuits/target/tally_circuit.json
-sunspot setup ../circuits/target/tally_circuit.ccs
-GNARK_VERIFIER_BIN=/path/to/sunspot/gnark-solana/crates/verifier-bin sunspot deploy ../circuits/target/tally_circuit.vk
-anchor build
-```
+Do not run `sunspot setup` to replace missing proving keys for the configured
+verifiers. It performs a new trusted setup and produces a key that will not
+match the already deployed verifier. Creating new verifier keys is a separate
+deployment operation that requires updating the verifier IDs and program
+configuration; it does not make old proofs or election state transferable.
 
 Build the application program, then start a fresh Light test environment with
-the verifier and application program loaded at their configured addresses.
-Keep this running while executing `npm run test:light` in another terminal.
+the matching verifier and application program binaries loaded at their
+configured addresses. Keep it running while executing the validator-backed
+tests in another terminal.
 
 ```bash
 light test-validator \
-	--sbf-program 9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj ../circuits/target/voting_circuit.so \
+	--sbf-program BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV ../circuits/target/voting_circuit.so \
 	--sbf-program AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav ../circuits/target/tally_circuit.so \
-	--sbf-program 4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA target/deploy/zkp_voting.so
+	--sbf-program HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5 target/deploy/zkp_voting.so
 npm run test:light
 npm run test:tally
 ```

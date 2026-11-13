@@ -29,13 +29,13 @@ use ballot::{
 };
 
 // Keep the existing project address. Replace the verifier id after deploying the Sunspot circuit.
-declare_id!("4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA");
+declare_id!("HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5");
 
 /// Program-derived signer used as the authority for the Light V2 CPI. Its seed is derived
 /// from this program id, so only this program can authorize the compressed-account writes.
-pub const LIGHT_CPI_SIGNER: CpiSigner = derive_light_cpi_signer!("4uiu9QzRVZYdLdxCmADj6cQwFCrNufDCgU7NtsvQJWYA");
+pub const LIGHT_CPI_SIGNER: CpiSigner = derive_light_cpi_signer!("HyCme4fJ3PDgCR25aXrFmiumBuGVB8c7bggz4PkM8LW5");
 /// Pinned voting verifier program — compiled from `circuits/target/voting_circuit.vk`.
-pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj");
+pub const SUNSPOT_VERIFIER_ID: Pubkey = pubkey!("BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV");
 /// Pinned tally verifier program — compiled from `circuits/target/tally_circuit.vk`.
 pub const SUNSPOT_TALLY_VERIFIER_ID: Pubkey = pubkey!("AuSPaahFzAViTokdyhc6fYNe1gELiHRksbExo2YNptav");
 /// Max candidates per race (and encryption slots). Mirrors `K_MAX` in `voting_lib`.

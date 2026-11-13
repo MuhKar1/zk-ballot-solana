@@ -46,7 +46,7 @@ const fixture = JSON.parse(
 const proof = readFileSync(resolve(artifactDirectory, "voting_circuit.proof"));
 const publicWitness = readFileSync(resolve(artifactDirectory, "voting_circuit.pw"));
 const verifierId = new PublicKey(
-  "9jjgdh8kXLqZEkAGYjXTXsXGQeGALJ6YYKn5Gz3KXgYj"
+  "BmktzTCrmYeqxmDVfGwkKtVRnckNXk1PY5nb8TxCswKV"
 );
 const computeBudget = ComputeBudgetProgram.setComputeUnitLimit({
   units: 1_400_000,
@@ -277,7 +277,7 @@ describe("Light compressed ballot integration", () => {
     }
     const addressTreeInfo = {
       addressMerkleTreePubkeyIndex: 0,
-      addressQueuePubkeyIndex: 1,
+      addressQueuePubkeyIndex: addressTree.queue.equals(addressTree.tree) ? 0 : 1,
       rootIndex: validity.rootIndices[0],
     };
     const validityProof = {

@@ -47,5 +47,12 @@ export function getRelayerWallet(): SolanaWallet {
   }
 
   _relayer = buildWallet(Uint8Array.from(secret as number[]));
+  const expectedPublicKey = process.env.RELAYER_PUBLIC_KEY;
+  if (expectedPublicKey && _relayer.publicKey.toBase58() !== expectedPublicKey) {
+    _relayer = null;
+    throw new Error(
+      `Configured relayer secret key does not match RELAYER_PUBLIC_KEY (${expectedPublicKey})`
+    );
+  }
   return _relayer;
 }

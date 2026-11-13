@@ -6,7 +6,17 @@ import BN from "bn.js";
 import { useSolanaWallet } from "@/components/providers";
 import { Stepper } from "@/components/stepper";
 import { friendlyError } from "@/lib/errors";
-import { bytesToBigInt, buildTree, deriveSecret, hex, leafOf, poseidon2 } from "@/lib/crypto";
+import {
+  BN254_MODULUS,
+  G,
+  bytesToBigInt,
+  buildTree,
+  deriveSecret,
+  hex,
+  leafOf,
+  poseidon2,
+  scalarMul,
+} from "@/lib/crypto";
 import type { ElectionManifest } from "@/lib/manifest";
 import { getProgram } from "@/lib/solana/program";
 import { getConnection, programId } from "@/lib/solana/connection";
@@ -66,6 +76,11 @@ export default function AdminPage() {
 
   const [electionId, setElectionId] = useState<BN | null>(null);
   const [tallyKey, setTallyKey] = useState<{ sk: bigint; pkX: bigint; pkY: bigint } | null>(null);
+  const [expectedTallyPublicKey, setExpectedTallyPublicKey] = useState<{
+    pkX: bigint;
+    pkY: bigint;
+  } | null>(null);
+  const [tallySecretKeyText, setTallySecretKeyText] = useState("");
 
   const [positionsDraft, setPositionsDraft] = useState<PositionDraft[]>([
     { key: 0, title: "President", candidatesText: "Alice, Bob" },
@@ -117,6 +132,98 @@ export default function AdminPage() {
       setActionError(friendlyError(e));
     } finally {
       setElectionsLoading(false);
+    }
+  }
+
+  async function openElection(existing: AdminElection) {
+    if (!program || !wallet) return;
+    setBusy(true);
+    resetError();
+    try {
+      const [electionAddress] = electionPda(wallet.publicKey, existing.electionId, programId);
+      const electionAccount = await program.account.electionConfig.fetch(electionAddress);
+      const positionAccounts = await program.account.positionConfig.all([
+        { memcmp: { offset: 8, bytes: electionAddress.toBase58() } },
+      ]);
+      const loadedPositions: CommittedPosition[] = positionAccounts
+        .map(({ account }) => {
+          const positionId = (account.positionId as BN).toNumber();
+          const maxCandidates = Number(account.maxCandidates);
+          return {
+            positionId,
+            title: `Position ${positionId}`,
+            maxCandidates,
+            candidates: Array.from({ length: maxCandidates }, (_, i) => `Candidate ${i + 1}`),
+          };
+        })
+        .sort((a, b) => a.positionId - b.positionId);
+
+      if (loadedPositions.length === 0) {
+        throw new Error("this election has no positions to tally");
+      }
+
+      const nextStatuses: PositionStatus[] = [];
+      for (const positionInfo of loadedPositions) {
+        const [position] = positionPda(electionAddress, new BN(positionInfo.positionId), programId);
+        const [transcript] = transcriptPda(position, programId);
+        const [tally] = tallyPda(position, programId);
+        const transcriptAccount = await program.account.ballotTranscript.fetch(transcript).catch(() => null);
+        const tallyAccount = await program.account.tallyResult.fetch(tally).catch(() => null);
+        nextStatuses.push({
+          title: positionInfo.title,
+          ballotCount: transcriptAccount
+            ? (transcriptAccount.ballotCount as BN).toNumber()
+            : 0,
+          tally: tallyAccount
+            ? (tallyAccount.totals as BN[]).map((value) => value.toNumber())
+            : undefined,
+        });
+      }
+
+      setElectionId(existing.electionId);
+      setPositions(loadedPositions);
+      setPositionKey(loadedPositions.length + 1);
+      setTallyKey(null);
+      setExpectedTallyPublicKey({
+        pkX: bytesToBigInt(electionAccount.pkX as number[]),
+        pkY: bytesToBigInt(electionAccount.pkY as number[]),
+      });
+      setTallySecretKeyText("");
+      setElectionStatus({
+        isFrozen: electionAccount.isFrozen as boolean,
+        frozenRoot: hex(bytesToBigInt(electionAccount.frozenRoot as number[])),
+        leafCount: (electionAccount.leafCount as BN).toNumber(),
+      });
+      setStatuses(nextStatuses);
+      setStep(4);
+    } catch (e) {
+      setActionError(friendlyError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function restoreTallyKey() {
+    try {
+      if (!electionId || !expectedTallyPublicKey) {
+        throw new Error("select an election before restoring its tally key");
+      }
+      const sk = BigInt(tallySecretKeyText.trim());
+      if (sk <= 0n || sk >= BN254_MODULUS) {
+        throw new Error("tally secret key must be a decimal number between 1 and the field modulus");
+      }
+      const publicKey = scalarMul(G, sk);
+      if (
+        publicKey.x !== expectedTallyPublicKey.pkX ||
+        publicKey.y !== expectedTallyPublicKey.pkY
+      ) {
+        throw new Error("that tally secret key does not match the selected election");
+      }
+      setTallyKey({ sk, pkX: publicKey.x, pkY: publicKey.y });
+      setTallySecretKeyText("");
+      setActionError(null);
+    } catch (e) {
+      setActionError(friendlyError(e));
     }
   }
 
@@ -172,6 +279,7 @@ export default function AdminPage() {
       });
       setElectionId(id);
       setTallyKey(key);
+      setExpectedTallyPublicKey({ pkX: key.pkX, pkY: key.pkY });
       setTxSig(sig);
       setStep(2);
     } catch (e) {
@@ -278,12 +386,19 @@ export default function AdminPage() {
       });
 
       const next: PositionStatus[] = [];
+      const connection = getConnection();
       for (const p of positions) {
         const [position] = positionPda(election, new BN(p.positionId), programId);
         const [transcript] = transcriptPda(position, programId);
         const [tally] = tallyPda(position, programId);
-        const t = await program.account.ballotTranscript.fetch(transcript).catch(() => null);
-        const tal = await program.account.tallyResult.fetch(tally).catch(() => null);
+        const [transcriptInfo, tallyInfo] = await Promise.all([
+          connection.getAccountInfo(transcript, "confirmed"),
+          connection.getAccountInfo(tally, "confirmed"),
+        ]);
+        const t = transcriptInfo
+          ? await program.account.ballotTranscript.fetch(transcript)
+          : null;
+        const tal = tallyInfo ? await program.account.tallyResult.fetch(tally) : null;
         next.push({
           title: p.title,
           ballotCount: t ? (t.ballotCount as BN).toNumber() : 0,
@@ -331,10 +446,16 @@ export default function AdminPage() {
       const [election] = electionPda(wallet.publicKey, electionId, programId);
       const connection = getConnection();
       let posted = 0;
+      let alreadyPosted = 0;
 
       for (const p of positions) {
         const [position] = positionPda(election, new BN(p.positionId), programId);
         const [transcript] = transcriptPda(position, programId);
+        const [tally] = tallyPda(position, programId);
+        if (await connection.getAccountInfo(tally, "confirmed")) {
+          alreadyPosted++;
+          continue;
+        }
 
         const events = await fetchBallotCasts(connection, position);
         if (events.length === 0) continue;
@@ -365,7 +486,9 @@ export default function AdminPage() {
         posted++;
       }
 
-      if (posted === 0) throw new Error("no ballots found for any position");
+      if (posted === 0 && alreadyPosted === 0) {
+        throw new Error("no ballots found for any position");
+      }
       await refreshStatus();
     } catch (e) {
       setActionError(friendlyError(e));
@@ -442,6 +565,7 @@ export default function AdminPage() {
                     <th>Status</th>
                     <th>Voter list</th>
                     <th>Voters</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -463,6 +587,15 @@ export default function AdminPage() {
                       </td>
                       <td>{e.isFrozen ? "locked" : "open"}</td>
                       <td>{e.leafCount}</td>
+                      <td>
+                        <button
+                          className="btn"
+                          disabled={busy}
+                          onClick={() => void openElection(e)}
+                        >
+                          Open status & tally
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -597,6 +730,11 @@ export default function AdminPage() {
         <>
           <div className="card">
             <h2>Status & tally</h2>
+            <p className="hint">
+              Reviewing an existing election? Its positions and current results are loaded from
+              chain. To auto-tally, restore the secret key that was shown when the election was
+              created.
+            </p>
             <div className="row" style={{ marginBottom: 12 }}>
               <button className="btn" disabled={busy} onClick={refreshStatus}>
                 Refresh status
@@ -647,6 +785,27 @@ export default function AdminPage() {
                 </table>
               </div>
             ))}
+            {!tallyKey && (
+              <div className="field">
+                <label htmlFor="tally-secret-key">Tally secret key (decimal)</label>
+                <input
+                  id="tally-secret-key"
+                  className="input"
+                  type="password"
+                  autoComplete="off"
+                  value={tallySecretKeyText}
+                  onChange={(e) => setTallySecretKeyText(e.target.value)}
+                  placeholder="Enter the backed-up election tally key"
+                />
+                <button
+                  className="btn"
+                  disabled={!tallySecretKeyText.trim()}
+                  onClick={restoreTallyKey}
+                >
+                  Verify and restore tally key
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="card">
